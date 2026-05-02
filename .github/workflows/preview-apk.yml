@@ -69,38 +69,41 @@ jobs:
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > ${{ github.workspace }}/release.keystore
           chmod 600 ${{ github.workspace }}/release.keystore
-          
-          # Исправлено: используем STORE_FILE вместо KEYSTORE_FILE
+
+          # Имена ТОЧНО как в build.gradle signingConfigs
+          echo "DC_RELEASE_STORE_FILE=${{ github.workspace }}/release.keystore" >> gradle.properties
+          echo "DC_RELEASE_STORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}" >> gradle.properties
+          echo "DC_RELEASE_KEY_ALIAS=${{ secrets.KEY_ALIAS }}" >> gradle.properties
+          echo "DC_RELEASE_KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}" >> gradle.properties
+
+          # Для apksigner в следующих шагах
           echo "STORE_FILE=${{ github.workspace }}/release.keystore" >> $GITHUB_ENV
           echo "KEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}" >> $GITHUB_ENV
           echo "KEY_ALIAS=${{ secrets.KEY_ALIAS }}" >> $GITHUB_ENV
           echo "KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}" >> $GITHUB_ENV
-      
+
       - name: Build APK
-        run: |
-          scripts/ndk-make.sh arm64-v8a
-          ./gradlew --no-daemon -PABI_FILTER=arm64-v8a assembleFossRelease
+        run: ./gradlew --no-daemon -PABI_FILTER=arm64-v8a assembleFossRelease
 
       - name: ZipAlign APK
         run: |
           BUILD_TOOLS_VERSION=$(ls $ANDROID_HOME/build-tools/ | tail -n 1)
           ZIPALIGN="$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/zipalign"
-          
+
           INPUT_APK=$(find build/outputs/apk/foss/release -name "*.apk" ! -name "*-unaligned.apk" | head -n 1)
           OUTPUT_APK="${INPUT_APK%.apk}-aligned.apk"
-          
+
           echo "Aligning: $INPUT_APK -> $OUTPUT_APK"
           $ZIPALIGN -v -p 4 "$INPUT_APK" "$OUTPUT_APK"
-          
+
           echo "FINAL_APK=$OUTPUT_APK" >> $GITHUB_ENV
 
       - name: Sign APK with apksigner
         run: |
           BUILD_TOOLS_VERSION=$(ls $ANDROID_HOME/build-tools/ | tail -n 1)
           APKSIGNER="$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/apksigner"
-          
+
           echo "Signing: ${{ env.FINAL_APK }}"
-          # Используем STORE_FILE, так как именно он задан в предыдущем шаге
           $APKSIGNER sign \
             --ks "$STORE_FILE" \
             --ks-key-alias "$KEY_ALIAS" \
@@ -112,12 +115,11 @@ jobs:
             --out "${{ env.FINAL_APK }}" \
             "${{ env.FINAL_APK }}"
 
-
       - name: Verify Signature
         run: |
           BUILD_TOOLS_VERSION=$(ls $ANDROID_HOME/build-tools/ | tail -n 1)
           APKSIGNER="$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/apksigner"
-          
+
           echo "Verifying signature..."
           $APKSIGNER verify --verbose ${{ env.FINAL_APK }}
           if [ $? -ne 0 ]; then
